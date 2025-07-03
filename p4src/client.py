@@ -2,7 +2,7 @@ import socket
 import time
 import random
 
-SERVER_IP = '10.0.1.2'
+SERVER_IP = '10.0.1.2'  # Cambia con IP del server
 SERVER_PORT = 12345
 MESSAGGI = [b'Ciao, ', b'come ', b'stai?']
 
@@ -22,7 +22,7 @@ def run_client():
             while True:
                 data = client.recv(1024)
                 if not data:
-                    # Il server ha chiuso la connessione
+                    # Connessione chiusa dal server
                     break
                 risposta_completa += data
 
@@ -33,10 +33,8 @@ def run_client():
 
         finally:
             client.close()
-            print("🔚 Connessione chiusa dal server, client chiude in modo pulito")
-
-        # Aspetta un po' prima di riconnettere (opzionale)
-        time.sleep(1)
+            print("🔚 Connessione chiusa, riprovo tra 2 secondi...\n")
+            time.sleep(2)  # pausa prima di riaprire la connessione e ricominciare
 
 if __name__ == "__main__":
     run_client()

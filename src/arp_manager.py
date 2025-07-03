@@ -42,10 +42,10 @@ class ArpManager:
         try:
             table_name = "MyIngress.arp_exact"
             match_fields = {
-                               "standard_metadata.ingress_port": in_port,
-                               "hdr.ethernet.dstAddr": dst_eth_addr,
-                               "hdr.ethernet.srcAddr": src_eth_addr
-                           }
+                "standard_metadata.ingress_port": in_port,
+                "hdr.ethernet.dstAddr": dst_eth_addr,
+                "hdr.ethernet.srcAddr": src_eth_addr
+            }
             table_entry = self.p4info_helper.buildTableEntry(
                 table_name="MyIngress.arp_exact",
                 match_fields={
@@ -58,7 +58,6 @@ class ArpManager:
                     "port": port
                 })
             self.p4info_helper.upsertRuleMultipleMatch(sw, table_name, match_fields, table_entry)
-            #sw.WriteTableEntry(table_entry)
             print(
                 f"Installed ARP Reply rule via P4Runtime. switch: {sw.name}, in port: {in_port}, dest eth: {dst_eth_addr}, out port: {port}")
         except Exception as e:
@@ -68,10 +67,10 @@ class ArpManager:
         try:
             table_name = "MyIngress.arp_exact"
             match_fields = {
-                               "standard_metadata.ingress_port": in_port,
-                               "hdr.ethernet.dstAddr": dst_eth_addr,
-                               "hdr.ethernet.srcAddr": src_eth_addr
-                           }
+                "standard_metadata.ingress_port": in_port,
+                "hdr.ethernet.dstAddr": dst_eth_addr,
+                "hdr.ethernet.srcAddr": src_eth_addr
+            }
             table_entry = self.p4info_helper.buildTableEntry(
                 table_name="MyIngress.arp_exact",
                 match_fields={
@@ -84,7 +83,6 @@ class ArpManager:
                 }
             )
             self.p4info_helper.upsertRuleMultipleMatch(sw, table_name, match_fields, table_entry)
-            #sw.WriteTableEntry(table_entry)
             print("Installed ARP Flooding rule via P4Runtime.")
         except Exception as e:
             print(f"Error installing ARP Flooding rule: {e}")
@@ -217,7 +215,7 @@ class ArpManager:
                     target_mac = arp_info.get("target_mac")
                     target_ip = arp_info.get("target_ip")
             else:
-                print("Error during packet parsing.")
+                print("Errore durante il parsing del pacchetto.")
             try:
                 if ether_type in [2048, 2054]:
                     if eth_src not in self.port_map.get(switch, {}):

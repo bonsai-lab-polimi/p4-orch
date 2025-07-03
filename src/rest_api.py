@@ -265,6 +265,63 @@ def install_tunnel_rules():
         logger.error(f"Unexpected error in install_tunnel_rules: {e}")
 
 
+ACTION_PARAMS_MAP = {
+    "MyIngress.CheckFeature": ["node_id", "f_inout", "threshold"],
+    "MyIngress.SetClass": ["node_id", "class"],
+    "NoAction": [],
+}
+
+
+def get_match_fields_for(table_name):
+    if table_name.startswith("MyIngress.level"):
+        return ["meta.node_id", "meta.prevFeature", "meta.isTrue"]
+    raise ValueError(f"Match fields non definiti per {table_name}")
+
+
+def install_table_entries_on_wls(info, p4info_helper):
+    for wl_node in info["wl_nodes"]:
+        sw = switches[wl_node]
+        entries = info["table_entries"].get(wl_node, [])
+
+        for entry in entries:
+            match_values = entry["match_fields"]
+            action_values = entry["action_params"]
+            table_name = entry["table"]
+            action_name = entry["action"]
+
+            # Prendo i nomi reali dei match fields
+            match_field_names = get_match_fields_for(table_name)
+            if len(match_field_names) != len(match_values):
+                raise ValueError(f"Numero di match fields non corrisponde per {table_name}")
+
+            # Creo il dizionario match_fields {nome: valore}
+            match_fields = {name: value for name, value in zip(match_field_names, match_values)}
+
+            # Prendo i nomi reali dei parametri action
+            action_param_names = ACTION_PARAMS_MAP.get(action_name, [])
+            if len(action_param_names) != len(action_values):
+                raise ValueError(f"Numero di action params non corrisponde per {action_name}")
+
+            action_params = {name: value for name, value in zip(action_param_names, action_values)}
+
+            # Costruisco la regola
+            table_entry = p4info_helper.buildTableEntry(
+                table_name=table_name,
+                match_fields=match_fields,
+                action_name=action_name,
+                action_params=action_params
+            )
+
+            p4info_helper.upsertRuleMultipleMatch(
+                sw,
+                table_name,
+                match_fields,
+                table_entry
+            )
+
+            print(f"✅ Regola installata su WL {wl_node}: {table_name} → {action_name}")
+
+
 def start_monitoring_threads(switches, controller, arp_manager, digest_manager):
     loop = asyncio.get_running_loop()
     loop.create_task(controller.message_manager.start(switches, arp_manager, digest_manager))
@@ -319,6 +376,29 @@ def extract_info(file_content):
     else:
         data["wl_nodes"] = []
     controller.WL_manager.install_wl_rules(wl_nodes, switches)
+    # Table entries parsing
+    blocks = re.split(r'\n\s*\n', file_content.strip())
+    table_blocks = [b for b in blocks if b.strip().startswith("table_add")]
+
+    if len(table_blocks) != len(wl_nodes):
+        raise ValueError(
+            f"Numero di blocchi table_add ({len(table_blocks)}) non corrisponde al numero di WL ({len(wl_nodes)}).")
+
+    # Associa ogni blocco al relativo WL
+    table_entries = {}
+    for wl_node, block in zip(wl_nodes, table_blocks):
+        entries = re.findall(r'table_add\s+(\S+)\s+(\S+)\s+(.+?)\s+=>\s+(.+)', block)
+        parsed_entries = []
+        for table_name, action_name, match_fields, action_params in entries:
+            parsed_entries.append({
+                "table": table_name,
+                "action": action_name,
+                "match_fields": list(map(int, match_fields.strip().split())),
+                "action_params": list(map(int, action_params.strip().split()))
+            })
+        table_entries[wl_node] = parsed_entries
+
+    data["table_entries"] = table_entries
     return data
 
 
@@ -353,7 +433,16 @@ async def upload_file(file: UploadFile = File(...)):
         logger.info("Data saved to %s", output_filename)
 
         install_tunnel_rules()
+        print("=== WL NODES ===")
+        print(data["wl_nodes"])
 
+        print("\n=== TABLE ENTRIES PER WL ===")
+        for wl_node, entries in data["table_entries"].items():
+            print(f"\n▶ WL Node {wl_node}:")
+            for entry in entries:
+                print(
+                    f"  table_add {entry['table']} {entry['action']} {' '.join(map(str, entry['match_fields']))} => {' '.join(map(str, entry['action_params']))}")
+        install_table_entries_on_wls(data, controller.p4info_helper)
         return {"message": "Controller executed successfully"}
 
     except Exception as e:

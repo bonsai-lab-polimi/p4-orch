@@ -5,7 +5,7 @@ import matplotlib.image as mpimg
 from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
 
-with open("topology.json") as f:
+with open("../p4src/topology.json") as f:
     data = json.load(f)
 
 G = nx.Graph()

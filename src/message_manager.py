@@ -32,6 +32,12 @@ class MessageManager:
         """
         It handles digest messages for a specific switch via the stream channel.
         """
+        eth_src = None
+        eth_dst = None
+        ether_type = None
+        ingress_port = None
+        arp_info = None
+        metadata_list = []
         try:
             while True:
                 try:

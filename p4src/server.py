@@ -2,22 +2,21 @@ import socket
 import threading
 import logging
 
-# Configurazione logging
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
 )
 
-# Config
 HOST = '0.0.0.0'
 PORT = 12345
 FRASI_ACCETTATE = [b'Ciao, come stai?']
-TIMEOUT = 10  # secondi di timeout per i client inattivi
+TIMEOUT = 10
 
 def client_handler(conn, addr):
     logging.info(f"🔗 Nuova connessione da {addr}")
     conn.settimeout(TIMEOUT)
     buffer = b""
+    risposta_inviata = False
 
     try:
         while True:
@@ -28,20 +27,19 @@ def client_handler(conn, addr):
                     break
 
                 buffer += data
-                logging.debug(f"📥 Ricevuto da {addr}: {data}")
-
-                # Controlla se la frase attesa è nel buffer
+                logging.debug(f"📥 Ricevuto da {addr}: {len(data)} bytes")
                 for frase in FRASI_ACCETTATE:
-                    if frase in buffer:
+                    if frase in buffer and not risposta_inviata:
                         try:
                             conn.sendall(b"bene")
-                            logging.info(f"✅ Risposta inviata a {addr}: 'bene'")
+                            logging.info(f"✅ Risposta 'bene' inviata a {addr}")
+                            risposta_inviata = True
                         except Exception as send_err:
                             logging.error(f"❗ Errore invio risposta a {addr}: {send_err}")
-                        return  # Chiudi connessione dopo risposta
+                        break
 
             except socket.timeout:
-                logging.warning(f"⏳ Timeout da {addr}, chiudo la connessione.")
+                logging.warning(f"⏳ Timeout da {addr}, chiudo connessione.")
                 break
 
     except Exception as e:
@@ -63,16 +61,15 @@ def main():
         server.listen()
         logging.info(f"🚀 Server in ascolto su {HOST}:{PORT}")
     except Exception as e:
-        logging.critical(f"❌ Errore durante il bind/listen del server: {e}")
+        logging.critical(f"❌ Errore bind/listen: {e}")
         return
 
     while True:
         try:
             conn, addr = server.accept()
-            client_thread = threading.Thread(target=client_handler, args=(conn, addr), daemon=True)
-            client_thread.start()
+            threading.Thread(target=client_handler, args=(conn, addr), daemon=True).start()
         except Exception as e:
-            logging.error(f"💥 Errore accettando connessione: {e}")
+            logging.error(f"💥 Errore accept: {e}")
 
 if __name__ == "__main__":
     main()

@@ -27,7 +27,7 @@ class TunnelManager:
             next_switch = intermediate_switches[idx + 1] if idx + 1 < len(intermediate_switches) else egress_sw
             port_to_forward = SWITCH_PORTS[switch.name][next_switch.name]
             try:
-                print(f"Installing transit tunnel rule on {switch.name} forwarding to {next_switch.name} on port {port_to_forward}")
+                print(f"Installing transit tunnel rule on {switch.name} forwarding to {next_switch.name}")
                 table_entry = self.p4info_helper.buildTableEntry(
                     table_name="MyIngress.myTunnel_exact",
                     match_fields={"hdr.myTunnel.dst_id": tunnel_id_int},

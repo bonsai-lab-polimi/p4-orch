@@ -178,7 +178,7 @@ The repository already includes a ready-made example topology, example `.json` f
 - `topology.json` — a sample network topology that can be used as a starting point for experiments.
 - `examples/rules_example.json` — example routing/tunnel rule files ready to be uploaded to the controller.
 - `server.py` — helper script to start a host in the emulated topology as a simple TCP server listening on a configurable port (useful to validate reachability and tunnel behaviour).
-- `RST_Flood.py` and `SYN_Flood.py` — lightweight traffic generators that produce RST- and SYN-based flood traffic respectively, intended for controlled testing of detection and mitigation features.
+- `RST_Flood.py` and `PSH_Flood.py` — lightweight traffic generators that produce RST- and PSH-based flood traffic respectively, intended for controlled testing of detection and mitigation features.
 
 ## Monitoring with Prometheus and Grafana
 

@@ -23,7 +23,6 @@ register <bit<32>>(MAX_PORTS) queue_depth_register;
 #define PACKET_THR 50
 #define CLASS_NOT_SET 7
 
-
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -438,6 +437,8 @@ control MyIngress(inout headers hdr,
     //registers for the lifetime of the flow
     register<bit<32>>(MAX_REGISTER_ENTRIES) reg_time_first_pkt;
     register<bit<32>>(MAX_REGISTER_ENTRIES) reg_time_last_pkt;
+    register<bit<32>>(MAX_REGISTER_ENTRIES) reg_time_last_pkt_bwd;
+    register<bit<32>>(MAX_REGISTER_ENTRIES) reg_time_last_pkt_fwd;
     register<bit<32>>(MAX_REGISTER_ENTRIES) reg_flow_duration;
     register<bit<8>>(MAX_REGISTER_ENTRIES) reg_packets;
 
@@ -542,6 +543,8 @@ control MyIngress(inout headers hdr,
         reg_time_first_pkt.write(meta.register_index, 0);
 
         reg_time_last_pkt.write(meta.register_index, 0);
+        reg_time_last_pkt_bwd.write(meta.register_index, 0);
+        reg_time_last_pkt_fwd.write(meta.register_index, 0);
 
         reg_flow_duration.write(meta.register_index, 0);
 
@@ -870,7 +873,7 @@ control MyIngress(inout headers hdr,
    	reg_fwd_iat.read(meta.fwd_iat, meta.register_index);
    	reg_fwd_iat_min.read(meta.fwd_iat_min, meta.register_index);
 
-   	if(meta.fwd_iat < meta.fwd_iat_min) {
+   	if(meta.fwd_iat < meta.fwd_iat_min && meta.fwd_iat != 0) {
    		meta.fwd_iat_min = meta.fwd_iat;
    	}
 
@@ -953,7 +956,7 @@ control MyIngress(inout headers hdr,
     	bit<32> min_f;
     	reg_len_fwd_pkts.read(min_f, meta.register_index);
 
-    	meta.fwd_pkt_len_min = meta.len_fwd_pkts;
+    	//meta.fwd_pkt_len_min = meta.len_fwd_pkts;
 
     	if (min_f <= meta.fwd_pkt_len_min) {
     		meta.fwd_pkt_len_min = min_f;
@@ -999,31 +1002,69 @@ control MyIngress(inout headers hdr,
 
 
     action count_payload() {
-    	reg_fwd_act_data_pkts.read(meta.fwd_act_data_pkts, meta.register_index);
-    	if(hdr.myTunnel.next_header_type == 0x800 && hdr.ipv4.protocol == 6) { /*this is the case of count payload TCP packets, where
-    									  the control is done on the dataOffset field of the header
-    									  because dataOffset stands for the offset of the payload and if this
-    									  value is higher than 5 (which is the minimum allowed value and it
-    									  corresponds to an offset of five 32 bits words, in other words 20 bytes.)
-    									  If the condition is true, this means that there are more features respect
-    									  to the basic TCP header, furthermore this means that the payload begins further on in the packet.*/
-    		if(hdr.tcp.dataOffset > 5) {
-    			meta.fwd_act_data_pkts = meta.fwd_act_data_pkts + 1;
-    		}
-    	}
-    	else if(hdr.myTunnel.next_header_type == 0x800 && hdr.ipv4.protocol == 17)  {/* in this case, the the count concerns the UDP packets
+    reg_fwd_act_data_pkts.read(meta.fwd_act_data_pkts, meta.register_index);
+    bit<16> tcp_payload_len = 0;
+    bool should_count = false;
+
+
+    if (hdr.ethernet.isValid()) {
+        log_msg("ETH type {:#x}, myTun_valid {}, myTun_next {}",
+                {hdr.ethernet.etherType, hdr.myTunnel.isValid(), hdr.myTunnel.next_header_type});
+    }
+
+
+    if (hdr.ipv4.isValid() && hdr.tcp.isValid()) {
+
+        if (hdr.ipv4.version != 4) {
+            log_msg("SKIP: ipv4.version != 4 ({}). idx {}", {hdr.ipv4.version, meta.register_index});
+        } else if (hdr.ipv4.ihl < 5) {
+            log_msg("SKIP: ipv4.ihl < 5 ({}). idx {}", {hdr.ipv4.ihl, meta.register_index});
+        } else if (hdr.tcp.dataOffset < 5) {
+            log_msg("SKIP: tcp.dataOffset < 5 ({}). idx {}", {hdr.tcp.dataOffset, meta.register_index});
+        } else {
+            // calcoli con cast espliciti
+            bit<16> ip_total_len = (bit<16>) hdr.ipv4.totalLen;
+            bit<16> ip_hdr_len   = (bit<16>) ((bit<16>)hdr.ipv4.ihl * 4);
+            bit<16> tcp_hdr_len  = (bit<16>) ((bit<16>)hdr.tcp.dataOffset * 4);
+
+            if (ip_total_len > (ip_hdr_len + tcp_hdr_len)) {
+                tcp_payload_len = ip_total_len - (ip_hdr_len + tcp_hdr_len);
+                log_msg("OK idx {}: ip_total {}, ip_hdr {}, tcp_hdr {}, payload_len {} flags psh {} syn {} ack {}",
+                        {meta.register_index, ip_total_len, ip_hdr_len, tcp_hdr_len, tcp_payload_len, hdr.tcp.psh, hdr.tcp.syn, hdr.tcp.ack});
+                if (tcp_payload_len > 0) should_count = true;
+            } else {
+
+                log_msg("NO_PAYLOAD idx {}: ip_total {}, ip_hdr {}, tcp_hdr {}, sum {}",
+                        {meta.register_index, ip_total_len, ip_hdr_len, tcp_hdr_len, ip_hdr_len + tcp_hdr_len});
+            }
+        }
+    }
+    else if(hdr.myTunnel.next_header_type == 0x800 && hdr.ipv4.protocol == 17)  {/* in this case, the the count concerns the UDP packets
     										since the UDP is has a simpler structure than the TCP one
     										the control is on the length of the packet itself: the
     										standard length of the packet is 8 byte, so if the length
     										is higher, the packet contains payload */
         	if(hdr.udp.length > 8) {
-        		meta.fwd_act_data_pkts = meta.fwd_act_data_pkts + 1;
+        		should_count = true;
         	}
 
     	}
-
-    	reg_fwd_act_data_pkts.write(meta.register_index, meta.fwd_act_data_pkts);
+    else {
+        log_msg("HDR_INVALID idx {}: ipv4_valid {} tcp_valid {} myTun_valid {}",
+                {meta.register_index, hdr.ipv4.isValid(), hdr.tcp.isValid(), hdr.myTunnel.isValid()});
     }
+
+    if (should_count) {
+        meta.fwd_act_data_pkts = meta.fwd_act_data_pkts + 1;
+        reg_fwd_act_data_pkts.write(meta.register_index, meta.fwd_act_data_pkts);
+    }
+
+    else {
+        reg_fwd_act_data_pkts.write(meta.register_index, meta.fwd_act_data_pkts);
+    }
+}
+
+
 
 
 
@@ -1048,15 +1089,15 @@ control MyIngress(inout headers hdr,
 
 
    action bwd_iat_tot() {
-	 	reg_time_last_pkt.write(meta.register_index, (bit<32>)standard_metadata.ingress_global_timestamp);
+	//reg_time_last_pkt.write(meta.register_index, (bit<32>)standard_metadata.ingress_global_timestamp);
    	reg_bwd_iat.read(meta.bwd_iat, meta.register_index);
    	reg_bwd_iat_tot.read(meta.bwd_iat_tot, meta.register_index);
 
    	//meta.bwd_iat_tot = (bit<32>) 0;
-   	meta.bwd_iat = (bit<32>)standard_metadata.ingress_global_timestamp - meta.time_last_pkt;
+   	//meta.bwd_iat = (bit<32>)standard_metadata.ingress_global_timestamp - meta.time_last_pkt;
    	meta.bwd_iat_tot = meta.bwd_iat_tot + meta.bwd_iat;
 
-   	reg_bwd_iat.write(meta.register_index, meta.bwd_iat);
+   	//reg_bwd_iat.write(meta.register_index, meta.bwd_iat);
    	reg_bwd_iat_tot.write(meta.register_index, meta.bwd_iat_tot);
 
    }
@@ -1099,14 +1140,13 @@ control MyIngress(inout headers hdr,
 
 
 
-
    action bwd_iat_min() {
    	//finding the inter-arrival time max value
    	reg_bwd_iat.read(meta.bwd_iat, meta.register_index);
    	reg_bwd_iat_min.read(meta.bwd_iat_min, meta.register_index);
-   	//reg_bwd_iat.read(meta.bwd_iat, meta.register_index);
+   	reg_bwd_iat.read(meta.bwd_iat, meta.register_index);
    	//meta.bwd_iat_min = meta.bwd_iat;
-   	if(meta.bwd_iat < meta.bwd_iat_min) {
+   	if(meta.bwd_iat < meta.bwd_iat_min && meta.bwd_iat !=0) {
    		meta.bwd_iat_min = meta.bwd_iat;
 
    	}
@@ -1338,7 +1378,7 @@ control MyIngress(inout headers hdr,
    	bit<8> packets_TMP = meta.packets;
    	bit<32> iat_tot_TMP = meta.iat_tot;
 
-   	//reg_flow_iat_mean.read(meta.flow_iat_mean, meta.register_index);
+   	reg_flow_iat_mean.read(meta.flow_iat_mean, meta.register_index);
 
    	calculate_mean(iat_tot_TMP, packets_TMP, meta.flow_iat_mean);
 
@@ -2824,9 +2864,10 @@ control MyIngress(inout headers hdr,
                         }
                         else{
 
-	    		    meta.time_last_pkt = (bit<32>)standard_metadata.ingress_global_timestamp;
 
+                            reg_time_last_pkt.read(meta.time_last_pkt, meta.register_index);
 	    		    if(meta.is_first == 1) {
+	    		        meta.time_last_pkt = (bit<32>)standard_metadata.ingress_global_timestamp;
 	    		    	reg_time_first_pkt.write(meta.register_index, meta.time_last_pkt );
 	    		    }
 
@@ -2845,103 +2886,94 @@ control MyIngress(inout headers hdr,
 
 	            	    if (meta.direction == 0) {  //NV
 	    		    	    count_pkts_fwd(); //va eseguito sempre per primo
-	    		    		calc_len_fwd_pkts();
+	    		    	    calc_len_fwd_pkts();
 
 	            	    	if (meta.is_first == 1){ //NV
 
 	            	    		meta.fwd_iat = meta.time_last_pkt;
 
-	            	    		reg_fwd_iat.write(meta.register_index, meta.time_last_pkt);
+	            	    		//reg_fwd_iat.write(meta.register_index, meta.time_last_pkt);
 
 	            	    		reg_time_last_pkt.write(meta.register_index, meta.time_last_pkt);
+	            	    		//reg_time_last_pkt_bwd.write(meta.register_index, meta.time_last_pkt);
+	            	    		reg_time_last_pkt_fwd.write(meta.register_index, meta.time_last_pkt);
+
 	            	    	}
 	            	    	else{ //NV
-	            	    		reg_time_last_pkt.read(meta.time_last_pkt, meta.register_index); // prendo l'ultimo time stamp
+	            	    		//reg_time_last_pkt.read(meta.time_last_pkt, meta.register_index);
+	            	    		reg_time_last_pkt_fwd.read(meta.time_last_pkt, meta.register_index);
 
 	            	    		meta.fwd_iat = (bit<32>)standard_metadata.ingress_global_timestamp - meta.time_last_pkt;
 
 	            	    		reg_fwd_iat.write(meta.register_index, meta.fwd_iat);
 
 	            	    		reg_time_last_pkt.write(meta.register_index, (bit<32>)standard_metadata.ingress_global_timestamp);
+	            	    		reg_time_last_pkt_fwd.write(meta.register_index, (bit<32>)standard_metadata.ingress_global_timestamp);
 	            	    	}
-
-
-	    		    	f_iat_tot.apply();
-	    		    	f_iat_mean.apply();
-	    		    	f_iat_max.apply();
-	    		    	f_iat_min.apply();
-	    		    	totlen_f_pkts.apply();
-	    		    	f_pkt_len_mean.apply();
+	            	    	f_pkt_len_mean.apply();
 	    		    	f_pkt_len_max.apply();
 	    		    	f_pkt_len_min.apply();
-	    		    	f_header_len.apply();
-	    		    	f_seg_size_min.apply();
 	    		    	f_act_data_pkts.apply();
-    	    		    	init_f_win_byts.apply();
-    	    		    	    b_iat_tot.apply();
-    	    		    	b_iat_mean.apply();
-    	    		            b_iat_max.apply();
-    	    		    	b_iat_min.apply();
-    	    		    	totlen_b_pkts.apply();
-    	    		            b_pkt_len_mean.apply();
-    	    		    	b_pkt_len_max.apply();
-    	    		    	b_pkt_len_min.apply();
-    	    		    	b_header_len.apply();
-    	    		            init_b_win_byts.apply();
+
     	    		    	//log_msg("5 tupla ({}-{}-{}-{}-{}) hash {}", {hdr.ipv4.srcAddr, hdr.ipv4.dstAddr, hdr.tcp.srcPort, hdr.tcp.dstPort, hdr.ipv4.protocol, meta.register_index});
-
-
 
     	    		    }
 
 	            	    //hai direction e register_index. Direction ti fa capire se il flusso è fwd - bwd mentre register index ha l'hash della 5-tupla del pacchetto appena entrato.
                                 //else{ // flow in backward
                             else if (meta.direction == 1){
-
-
 	    		    	count_pkts_bwd(); //va eseguito sempre per primo
 	    		    	calc_len_bwd_pkts();
 	            	    	if (meta.is_first == 1){ //NV
 
 	            	    		meta.bwd_iat = meta.time_last_pkt;
 
-	            	    		reg_bwd_iat.write(meta.register_index, meta.time_last_pkt);
+	            	    		//reg_bwd_iat.write(meta.register_index, meta.time_last_pkt);
 
 	            	    		reg_time_last_pkt.write(meta.register_index, meta.time_last_pkt);
+	            	    		reg_time_last_pkt_bwd.write(meta.register_index, meta.time_last_pkt);
 	            	    	}
 	            	    	else{ //NV
-	            	    		reg_time_last_pkt.read(meta.time_last_pkt, meta.register_index); // prendo l'ultimo time stamp
-
+	            	    		//reg_time_last_pkt.read(meta.time_last_pkt, meta.register_index); // prendo l'ultimo time stamp
+                                        reg_time_last_pkt_bwd.read(meta.time_last_pkt, meta.register_index);
 	            	    		meta.bwd_iat = (bit<32>)standard_metadata.ingress_global_timestamp - meta.time_last_pkt;
-
+	            	    		if ( meta.bwd_iat == (bit<32>)standard_metadata.ingress_global_timestamp) {
+	            	    		    reg_time_last_pkt_bwd.write(meta.register_index, meta.bwd_iat);
+	            	    		}
+	            	    		else {
 	            	    		reg_bwd_iat.write(meta.register_index, meta.bwd_iat);
-
 	            	    		reg_time_last_pkt.write(meta.register_index, (bit<32>)standard_metadata.ingress_global_timestamp);
+	            	    		reg_time_last_pkt_bwd.write(meta.register_index, (bit<32>)standard_metadata.ingress_global_timestamp);
+	            	    		}
 	            	    	}
+	            	    	b_pkt_len_mean.apply();
+    	    		    	b_pkt_len_max.apply();
+    	    		    	b_pkt_len_min.apply();
 
-                                f_iat_tot.apply();
+
+	    		    }
+	    		    f_iat_tot.apply();
 	    		    	f_iat_mean.apply();
 	    		    	f_iat_max.apply();
 	    		    	f_iat_min.apply();
 	    		    	totlen_f_pkts.apply();
-	    		    	f_pkt_len_mean.apply();
-	    		    	f_pkt_len_max.apply();
-	    		    	f_pkt_len_min.apply();
+	    		    	//f_pkt_len_mean.apply();
+	    		    	//f_pkt_len_max.apply();
+	    		    	//f_pkt_len_min.apply();
 	    		    	f_header_len.apply();
 	    		    	f_seg_size_min.apply();
-	    		    	f_act_data_pkts.apply();
+
     	    		    	init_f_win_byts.apply();        //tot_b_pkts.apply();
-	    		            b_iat_tot.apply();
+	    		        b_iat_tot.apply();
     	    		    	b_iat_mean.apply();
-    	    		            b_iat_max.apply();
+    	    		        b_iat_max.apply();
     	    		    	b_iat_min.apply();
     	    		    	totlen_b_pkts.apply();
-    	    		            b_pkt_len_mean.apply();
-    	    		    	b_pkt_len_max.apply();
-    	    		    	b_pkt_len_min.apply();
+    	    		        //b_pkt_len_mean.apply();
+    	    		    	//b_pkt_len_max.apply();
+    	    		    	//b_pkt_len_min.apply();
     	    		    	b_header_len.apply();
-    	    		            init_b_win_byts.apply();
-	    		    }
+    	    		        init_b_win_byts.apply();
 
 
 
@@ -2963,8 +2995,6 @@ control MyIngress(inout headers hdr,
 	    		    	meta.time_first_pkt = (bit<32>)standard_metadata.ingress_global_timestamp;
 	    		    	meta.time_last_pkt = (bit<32>)standard_metadata.ingress_global_timestamp;
 
-	    		    } else {
-	    		    	meta.time_last_pkt = (bit<32>)standard_metadata.ingress_global_timestamp; //inutile viene già assegnato prima cancella l'else
 	    		    }
 
 	    		    packet_len_tot();
@@ -3115,13 +3145,16 @@ control MyIngress(inout headers hdr,
 
 	    		    		//If after my addition all colors have classified, I perform the majority voting
 	    		    		if (hdr.custom.color1 != 0 && hdr.custom.color2 != 0 && hdr.custom.color3 != 0){
-                                                       meta.final = 0;
-	    		    		       if (hdr.custom.result1 == 1){}
+                                               meta.final = 0;
+	    		    		       if (hdr.custom.result1 == 1){
                                                            if (hdr.custom.result2 == 1 || hdr.custom.result3 == 1) meta.final = 1;
-	    		    		       if  (hdr.custom.result2 == 1)
+                                               }
+	    		    		       if  (hdr.custom.result2 == 1){
                                                            if (hdr.custom.result1 == 1 || hdr.custom.result3 == 1) meta.final = 1;
-	    		    		       if (hdr.custom.result3 == 1)
+                                               }
+	    		    		       if (hdr.custom.result3 == 1){
                                                            if (hdr.custom.result1 == 1 || hdr.custom.result2 == 1) meta.final = 1;
+                                               }
 	    		    		       //log_msg("Final result: {}", {meta.final});
 
 	    		    		       if (meta.final == 1){ //If it is malicious

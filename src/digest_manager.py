@@ -14,6 +14,10 @@ from concurrent.futures import ThreadPoolExecutor
 import math
 import pandas as pd
 import os
+import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class DigestManager:
@@ -31,6 +35,7 @@ class DigestManager:
         self._excel_thread = threading.Thread(target=self._excel_writer_thread, daemon=True)
         self._excel_running = True
         self._excel_thread.start()
+        self.switches = switches
 
         self.port_map = {sw: {} for sw in switches.values()}
         self.arp_rules = {sw: {} for sw in switches.values()}
@@ -38,20 +43,20 @@ class DigestManager:
         self.bcast = "ff:ff:ff:ff:ff:ff"  # broadcast
         self.switch_port_queue_depth = Gauge('switch_port_queue_depth',
                                              'Coda di congestione per switch e porta',
-                                             ['switch', 'port'])
+                                             ['switch', 'port', 'flow'])
         self.tunnel_id_gauge = Gauge('tunnel_id', 'ID del tunnel', ['switch', 'port'])
         self.switch_time_gauge = Gauge('switch_time', 'Tempo di switch', ['switch', 'flow'])
         self.interarrival_time_gauge = Gauge('interarrival_time', 'Tempo di interarrivo tra pacchetti in ms',
                                              ['switch', 'flow'])
         self.packet_length_gauge = Gauge('packet_length', 'Lunghezza del pacchetto in Byte', ['switch', 'flow'])
-        self.queue_time_gauge = Gauge('queue_time', 'Tempo di attesa in coda', ['switch', 'flow'])
+        self.queue_time_gauge = Gauge('queue_time', 'Tempo di attesa in coda', ['switch', 'port', 'flow'])
         self.sending_rate_gauge = Gauge('sending_rate', 'sending rate in bps', ['switch', 'flow'])
         self.digest_timestamp_gauge = Gauge('digest_timestamp', 'digest timestamp', ['switch', 'flow'])
         self.last_timestamp_gauge = Gauge('last_digest_timestamp', 'last digest timestamp', ['switch', 'flow'])
         self.total_byte_gauge = Gauge('total_byte_count', 'total_byte_count', ['switch', 'flow'])
         self.total_packet_gauge = Gauge('total_packet_count', 'total_packet_count', ['switch', 'flow'])
         self.throughput_gauge = Gauge('throughput', 'throughput', ['switch', 'flow'])
-        self.isWLGauge = Gauge('weak_learner', 'weak learner', ['switch', 'is_WL'])
+        #self.isWLGauge = Gauge('weak_learner', 'weak learner', ['switch', 'is_WL'])
         self.isMaliciousGauge = Gauge('ismalicious_flow', 'malicious flow', ['switch', 'flow'])
         self.overhead_Gauge = Gauge('overhead', 'overhead ns', ['switch', 'flow'])
         self.maliciousFlowGauge = Gauge(
@@ -128,7 +133,7 @@ class DigestManager:
             "Queue Depth (packets)": [queue_depth],
             "Queue Time (ms)": [queue_time],
             "Switch Time (ms)": [switch_time],
-            "Interarrival Time (ms)": [interarrival_time],
+            "Interarrival Time (s)": [interarrival_time],
             "Packet Length (Bytes)": [packet_length],
             "Sending Rate (bps)": [sending_rate],
             "Delta Time Digest (bps)": [delta_time],
@@ -149,70 +154,83 @@ class DigestManager:
         # Accodo il task
         self._excel_queue.put({"type": "full", "data": data})
 
-    # def save_to_excel_time(self, switch, tunnel_id, queue_depth, queue_time, switch_time,
-    #                       ):
-    #    data = {
-    #        "Switch": [switch],
-    #        "Tunnel ID": [tunnel_id],
-    #        "Queue Depth (packets)": [queue_depth],
-    #        "Queue Time (ms)": [queue_time],
-    #        "Switch Time (ms)": [switch_time],
-    #    }
-    #    new_df = pd.DataFrame(data)
-    #
-    #    if os.path.exists(self.filename_time):
-    #
-    #        existing_df = pd.read_excel(self.filename_time)
-    #        updated_df = pd.concat([existing_df, new_df], ignore_index=True)
-    #    else:
-    #
-    #        updated_df = new_df
-    #
-    #    updated_df.to_excel(self.filename_time, index=False)
-    #
-    #    print(f"📊 Dati salvati con successo in {self.filename_time}")
-    #
-    # def save_to_excel(self, switch, tunnel_id, queue_depth, queue_time, switch_time,
-    #                  interarrival_time, packet_length, sending_rate, delta_time, throughput,
-    #                  digest_timestamp, total_byte_count, total_packet_count, is_WL, processing_time,
-    #                  in_port, is_malicious, src_port, dst_port, src_ip, dst_ip, protocol, overhead):
-    #
-    #    data = {
-    #        "Switch": [switch],
-    #        "Tunnel ID": [tunnel_id],
-    #        "In Port": [in_port],
-    #        "Queue Depth (packets)": [queue_depth],
-    #        "Queue Time (ms)": [queue_time],
-    #        "Switch Time (ms)": [switch_time],
-    #        "Interarrival Time (ms)": [interarrival_time],
-    #        "Packet Length (Bytes)": [packet_length],
-    #        "Sending Rate (bps)": [sending_rate],
-    #        "Delta Time Digest (bps)": [delta_time],
-    #        "Throughput (bps)": [throughput],
-    #        "Digest Timestamp (ms)": [digest_timestamp],
-    #        "Total Byte Count": [total_byte_count],
-    #        "Total Packet Count": [total_packet_count],
-    #        "Weak Learner": ["Yes" if is_WL == 1 else "No"],
-    #        "Processing Time (ms)": [processing_time],
-    #        "Is Malicious": ["Yes" if is_malicious == 1 else "No"],
-    #        "Source Port": [src_port],
-    #        "Destination Port": [dst_port],
-    #        "Source IP": [src_ip],
-    #        "Destination IP": [dst_ip],
-    #        "Protocol": [protocol],
-    #        "Overhead (ms)" : [overhead]
-    #    }
-    #
-    #    new_df = pd.DataFrame(data)
-    #
-    #    if os.path.exists(self.filename):
-    #        existing_df = pd.read_excel(self.filename)
-    #        updated_df = pd.concat([existing_df, new_df], ignore_index=True)
-    #    else:
-    #        updated_df = new_df
-    #
-    #    updated_df.to_excel(self.filename, index=False)
-    #    print(f"📊 Dati salvati con successo in {self.filename}")
+    def install_block_on_first_switch(self, switches, tunnel_id):
+        """
+        Legge parsed_data.json, trova la rotta corrispondente al tunnel_id e installa
+        una regola di blocco sul primo switch di quella rotta.
+
+        :param p4_helper: istanza helper P4 per installare regole
+        :param switches: dict {switch_id: switch_object} di tutti gli switch
+        :param tunnel_id: ID del tunnel da bloccare
+        """
+        try:
+            with open('parsed_data.json', 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.error("Error reading JSON file: %s", e)
+            return
+
+        routes = {tuple(map(int, key.split(','))): value for key, value in data.get("routes", {}).items()}
+        found_route = None
+        first_switch_id = None
+        tunnels = []
+        switches = {idx + 1: switch for idx, switch in enumerate(switches.values())}
+        try:
+            for (src_host, dst_host), path in routes.items():
+                dst_eth_addr, dst_ip_addr = MAC_IP_MAPPING[dst_host]
+                src_eth_addr, src_ip_addr = MAC_IP_MAPPING[src_host]
+                tunnels.append(((src_host, dst_host), path, src_eth_addr, src_ip_addr, dst_eth_addr, dst_ip_addr))
+
+                inverted_path = list(reversed(path))
+                inverted_src_host, inverted_dst_host = dst_host, src_host
+                src_eth_addr, src_ip_addr = MAC_IP_MAPPING[inverted_src_host]
+                dst_eth_addr, dst_ip_addr = MAC_IP_MAPPING[inverted_dst_host]
+
+                tunnels.append(((inverted_src_host, inverted_dst_host), inverted_path, src_eth_addr, src_ip_addr,
+                                dst_eth_addr, dst_ip_addr))
+        except Exception as e:
+            logger.error("Error while building tunnels: %s", e)
+            success = False
+        logger.info("Built %d tunnels", len(tunnels))
+        tunnel_ids = []
+        for tunnel in tunnels:
+            (src_host, dst_host), path, src_eth_addr, src_ip_addr, dst_eth_addr, dst_ip_addr = tunnel
+            generated_tunnel_id = ''.join(str(s) for s in path)
+            tunnel_ids.append(generated_tunnel_id)
+            switches_id = path
+            logger.warning(f"generated tunnel_id: {generated_tunnel_id}")
+            logger.info("Processing tunnel %s -> path %s", (src_host, dst_host), path)
+            if str(generated_tunnel_id) == str(tunnel_id):
+                found_route = path
+                try:
+                    ingress_sw = switches[src_host]
+                    # Oppure in modo più leggibile
+                    for sw_id, sw_obj in switches.items():
+                        logger.info("Switch ID: %s -> Name: %s", sw_id, getattr(sw_obj, 'name', sw_obj))
+                except KeyError as e:
+                    logger.error("Switch mapping missing for host: %s", e)
+                    continue
+                break
+
+        if not found_route:
+            logger.warning(f"No route found for tunnel_id {tunnel_id}")
+            return
+        if not ingress_sw:
+            logger.warning(f"First switch {first_switch_id} not found in switches dict")
+            return
+
+        # Installa la regola sul primo switch
+        try:
+            print(f"Installing blocking tunnel rule on {ingress_sw.name} for tunnel {tunnel_id}")
+            table_entry = self.p4info_helper.buildTableEntry(
+                table_name="MyIngress.myTunnel_exact",
+                match_fields={"hdr.myTunnel.dst_id": tunnel_id},
+                action_name="MyIngress.drop",
+                action_params={}
+            )
+            self.p4info_helper.upsertRule(ingress_sw, "MyIngress.myTunnel_exact", tunnel_id, table_entry)
+        except Exception as e:
+            logger.error(f"Error installing blocking tunnel rule on {ingress_sw.name}: {e}")
 
     def update_digest_timestamp(self, switch, tunnel_id, digest_timestamp, total_byte_count):
         current_byte = total_byte_count
@@ -237,7 +255,8 @@ class DigestManager:
         self.digest_timestamp_gauge.labels(switch=switch, flow=tunnel_id).set(delta_time)
         return delta_time, throughput
 
-    def interpret_tunnel_id(self, tunnel_id, in_port, switch_name, queue_depth, queue_time, switch_time):
+    def interpret_tunnel_id(self, tunnel_id, in_port, switch_name, queue_depth, queue_time, switch_time,
+                            digest_timestamp, byte_count, interarrival_time):
 
         tunnel_id_str = str(tunnel_id)
         current_switch = switch_name[1:]
@@ -251,20 +270,28 @@ class DigestManager:
                 previous_switch = "h" + str(in_port)
                 raise ValueError(f"first switch for {tunnel_id}")
 
-
             port = SWITCH_PORTS['s' + previous_switch][switch_name]
             print(
                 f" s{previous_switch} port {port}, queue depth: {queue_depth}")
 
-            self.switch_port_queue_depth.labels(switch=previous_switch, port=port).set(queue_depth)
-            self.queue_time_gauge.labels(switch=previous_switch, flow=tunnel_id).set(queue_time)
+            self.switch_port_queue_depth.labels(switch=previous_switch, port=port, flow=tunnel_id).set(queue_depth)
+            self.queue_time_gauge.labels(switch=previous_switch, port=port, flow=tunnel_id).set(queue_time)
             self.switch_time_gauge.labels(switch=previous_switch, flow=tunnel_id).set(switch_time)
-            #self.save_to_excel_time(previous_switch, tunnel_id, queue_depth, queue_time, switch_time)
+            if interarrival_time != 0:
+                sending_rate = 1 / interarrival_time
+            else:
+                sending_rate = 0
+            print(f"sending rate: {sending_rate} pps")
+            self.sending_rate_gauge.labels(switch=previous_switch, flow=tunnel_id).set(
+                sending_rate)
+            delta_time, throughput = self.update_digest_timestamp(previous_switch, tunnel_id, digest_timestamp,
+                                                                  byte_count)
+            # self.save_to_excel_time(previous_switch, tunnel_id, queue_depth, queue_time, switch_time)
 
-            return previous_switch, port
+            return previous_switch, port, delta_time, throughput, sending_rate
         except ValueError as e:
-            #print("Error when interpreting tunnel_id:", e)
-            return previous_switch, None
+            # print("Error when interpreting tunnel_id:", e)
+            return previous_switch, None, None, None, None
 
     def handle_digest_for_switch(self, switch, message, timestamp_received):
         global interarrival_time, packet_length, queue_time, switch_time, in_port, queue_depth, digest_timestamp, byte_count, packet_count, is_WL
@@ -307,7 +334,7 @@ class DigestManager:
                             interarrival_time_bytes = struct_members[4].bitstring
                             interarrival_time = int.from_bytes(interarrival_time_bytes,
                                                                byteorder='big') / 1000000
-                            print(f"Interarrival Time: {interarrival_time} ms")
+                            print(f"Interarrival Time: {interarrival_time} s")
                             self.interarrival_time_gauge.labels(switch=switch.name, flow=tunnel_id).set(
                                 interarrival_time)
 
@@ -346,12 +373,12 @@ class DigestManager:
                             is_WL = int.from_bytes(struct_members[10].bitstring, byteorder='big')
                             if is_WL == 1:
                                 print(f"switch {switch.name} is a WL")
-                                self.isWLGauge.labels(switch=switch.name, is_WL='1').set(
-                                    is_WL)
+                                #self.isWLGauge.labels(switch=switch.name, is_WL='1').set(
+                                #    is_WL)
                             else:
                                 print(f"switch {switch.name} is not a WL")
-                                self.isWLGauge.labels(switch=switch.name, is_WL='0').set(
-                                    is_WL)
+                                #self.isWLGauge.labels(switch=switch.name, is_WL='0').set(
+                                #    is_WL)
                         if struct_members[11].WhichOneof('data') == 'bitstring':
                             is_malicious = int.from_bytes(struct_members[11].bitstring, byteorder='big')
                             if is_malicious == 1:
@@ -390,25 +417,29 @@ class DigestManager:
                                 protocol=protocol_str,
                                 tunnel_id=tunnel_id
                             ).set(1)
+                            self.install_block_on_first_switch(self.switches, tunnel_id)
 
-                        previous_switch, port = self.interpret_tunnel_id(tunnel_id, in_port, switch.name, queue_depth,
-                                                                         queue_time,
-                                                                         switch_time)
-                        if (interarrival_time != 0):
-                            sending_rate = (packet_length * 8) / interarrival_time
-                        else:
-                            sending_rate = 0
-                        print(f"sending rate: {sending_rate} bps")
-                        self.sending_rate_gauge.labels(switch=switch.name, flow=tunnel_id).set(
-                            sending_rate)
-                        delta_time, throughput = self.update_digest_timestamp(switch.name, tunnel_id, digest_timestamp,
-                                                                              byte_count)
+                        previous_switch, port, delta_time, throughput, sending_rate = self.interpret_tunnel_id(
+                            tunnel_id, in_port, switch.name, queue_depth,
+                            queue_time,
+                            switch_time, digest_timestamp, byte_count, interarrival_time)
+                        # if (interarrival_time != 0):
+                        #    sending_rate = (packet_length * 8) / interarrival_time
+                        # else:
+                        #    sending_rate = 0
+                        # print(f"sending rate: {sending_rate} bps")
+                        # self.sending_rate_gauge.labels(switch=switch.name, flow=tunnel_id).set(
+                        #    sending_rate)
+                        # delta_time, throughput = self.update_digest_timestamp(switch.name, tunnel_id, digest_timestamp,
+                        #                                                      byte_count)
                         current_time = time.time()
                         overhead = (current_time - timestamp_received) * 1000000000
                         print(f"digest received at time: {timestamp_received}")
                         print(f"current time: {current_time}")
                         print(f"overhead ns: {overhead}")
                         self.overhead_Gauge.labels(switch=switch.name, flow=tunnel_id).set(overhead)
+                        self.last_timestamp_gauge.labels(switch=switch.name, flow=tunnel_id).set(time.time())
+
                         self.save_to_excel(
                             switch.name, tunnel_id, previous_switch, port, queue_depth, queue_time, switch_time,
                             interarrival_time, packet_length, sending_rate, delta_time, throughput,

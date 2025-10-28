@@ -58,6 +58,7 @@ solution_cost_gauge = Gauge("file_solution_cost", "Solution cost extracted from 
 num_nodes_deployed_gauge = Gauge("file_num_nodes_deployed", "Number of deployed nodes")
 average_path_weight_gauge = Gauge("file_average_path_weight", "Average path weight")
 percentage_covered_gauge = Gauge("file_percentage_covered", "Percentage of paths covered")
+# isWLGauge = Gauge('weak_learner', 'weak learner', ['switch', 'is_WL'])
 
 routes_gauge = Gauge(
     "file_routes",
@@ -152,8 +153,8 @@ def run_controller():
     controller_started = False
     logger.info("P4Controller has completed its execution.")
 
-def export_with_timeout(path, switches, timeout=10, fmt=None):
 
+def export_with_timeout(path, switches, timeout=10, fmt=None):
     def _worker():
         return controller.table_manager.export_tables(list(switches.values()), path, fmt=fmt)
 
@@ -164,6 +165,8 @@ def export_with_timeout(path, switches, timeout=10, fmt=None):
         except TimeoutError:
             fut.cancel()
             raise RuntimeError("Export timeout")
+
+
 def install_tunnel_rules():
     logger.info("ENTER install_tunnel_rules")
     success = True
@@ -176,7 +179,6 @@ def install_tunnel_rules():
             logger.error("Error reading JSON file: %s", e)
             return
 
-        # normalizzazione come prima
         routes = {tuple(map(int, key.split(','))): value for key, value in data.get("routes", {}).items()}
         logger.info("Routes parsed: %s", routes)
 
@@ -196,7 +198,7 @@ def install_tunnel_rules():
                                 dst_eth_addr, dst_ip_addr))
         except Exception as e:
             logger.error("Error while building tunnels: %s", e)
-            success = False  # non return; vogliamo arrivare al finally
+            success = False
         logger.info("Built %d tunnels", len(tunnels))
 
         tunnel_ids = []
@@ -216,19 +218,17 @@ def install_tunnel_rules():
                 except KeyError as e:
                     logger.error("Switch mapping missing for host: %s", e)
                     success = False
-                    continue  # passa al tunnel successivo
+                    continue
 
-                # costruisci lista oggetti switch intermedi
                 intermediate_switches = []
                 try:
                     for sw_id in intermediate_switches_id:
                         intermediate_switches.append(switches[sw_id])
                 except KeyError as e:
-                    logger.error("Switch id mancante nella path: %s", e)
+                    logger.error("Switch id missing in the path: %s", e)
                     success = False
                     continue
 
-                # scrive regole tunnel (mantieni la tua implementazione)
                 try:
                     controller.tunnel_manager.write_tunnel_rules(
                         ingress_sw, intermediate_switches, egress_sw, tunnel_id, dst_eth_addr, dst_ip_addr
@@ -238,7 +238,6 @@ def install_tunnel_rules():
                     success = False
                     continue
 
-                # stampa e calcoli delle porte (solo logging, non return)
                 try:
                     logger.info("source:%s, destination:%s", src_eth_addr, dst_eth_addr)
                     path_len = len(switches_id)
@@ -260,7 +259,6 @@ def install_tunnel_rules():
                             in_port = SWITCH_PORTS[sw.name][prev_sw.name]
                             port = SWITCH_PORTS[sw.name][next_sw.name]
 
-                        # se vuoi installare ARPReply puoi farlo qui (era commentato)
                         controller.arp_manager.writeARPReply(sw, in_port, dst_eth_addr, src_eth_addr, port)
                 except Exception as e:
                     logger.error("Error while calculating ports for tunnel %s: %s", tunnel_id, e)
@@ -271,15 +269,14 @@ def install_tunnel_rules():
             logger.error("Error processing tunnels top-level: %s", e)
             success = False
 
-        # Alla fine (sia che success sia True o False) leggiamo le tabelle per debug
         try:
             for switch in switches.values():
                 logger.info("About to read table rules from %s", switch.name)
                 controller.table_manager.read_table_rules(switch)
             # --- Export tables su file (absolute path per sicurezza) ---
             try:
-                out = "/tmp/p4_tables.xlsx"  # usa .json per evitare dipendenze, cambia estensione se preferisci .xlsx
-                # Se vuoi .xlsx e hai pandas/openpyxl: out = "/tmp/p4_tables.xlsx" e rimuovi fmt arg
+                out = "/tmp/p4_tables.xlsx"
+
                 file_written = export_with_timeout(out, switches, timeout=15, fmt="xlsx")
                 logger.info("Table export saved to: %s", file_written)
             except Exception as e:
@@ -296,7 +293,6 @@ def install_tunnel_rules():
         logger.info("EXIT install_tunnel_rules (success=%s)", success)
 
 
-
 ACTION_PARAMS_MAP = {
     "MyIngress.CheckFeature": ["node_id", "f_inout", "threshold"],
     "MyIngress.SetClass": ["node_id", "class"],
@@ -307,7 +303,7 @@ ACTION_PARAMS_MAP = {
 def get_match_fields_for(table_name):
     if table_name.startswith("MyIngress.level"):
         return ["meta.node_id", "meta.prevFeature", "meta.isTrue"]
-    raise ValueError(f"Match fields non definiti per {table_name}")
+    raise ValueError(f"Match fields does not defined for {table_name}")
 
 
 def install_table_entries_on_wls(info, p4info_helper):
@@ -324,7 +320,7 @@ def install_table_entries_on_wls(info, p4info_helper):
             # Prendo i nomi reali dei match fields
             match_field_names = get_match_fields_for(table_name)
             if len(match_field_names) != len(match_values):
-                raise ValueError(f"Numero di match fields non corrisponde per {table_name}")
+                raise ValueError(f"Number of match fields does not match for {table_name}")
 
             # Creo il dizionario match_fields {nome: valore}
             match_fields = {name: value for name, value in zip(match_field_names, match_values)}
@@ -332,7 +328,7 @@ def install_table_entries_on_wls(info, p4info_helper):
             # Prendo i nomi reali dei parametri action
             action_param_names = ACTION_PARAMS_MAP.get(action_name, [])
             if len(action_param_names) != len(action_values):
-                raise ValueError(f"Numero di action params non corrisponde per {action_name}")
+                raise ValueError(f"Number of action params does not match for {action_name}")
 
             action_params = {name: value for name, value in zip(action_param_names, action_values)}
 
@@ -351,7 +347,7 @@ def install_table_entries_on_wls(info, p4info_helper):
                 table_entry
             )
 
-            print(f"✅ Regola installata su WL {wl_node}: {table_name} → {action_name}")
+            print(f"✅ Rule installed on WL {wl_node}: {table_name} → {action_name}")
 
 
 def start_monitoring_threads(switches, controller, arp_manager, digest_manager):
@@ -366,11 +362,10 @@ def extract_info(file_content: str) -> dict:
     shortest_paths_constrained, wl_nodes, table_entries, metrics, shortest_paths_classic).
     """
     try:
-        logger.debug("Primi 200 caratteri del file_content: %r", file_content[:200])
         parsed = json.loads(file_content)
     except Exception as e:
-        # Fallisce se non è JSON: solleva errore chiaro (upload_file dovrebbe catturare e ritornare 400)
-        raise ValueError(f"Input non è JSON valido: {e}")
+
+        raise ValueError(f"Input is not valid JSON: {e}")
 
     data = {}
 
@@ -381,16 +376,14 @@ def extract_info(file_content: str) -> dict:
     data["run_time"] = inst.get("run_time", parsed.get("run_time"))
     data["solution_cost"] = inst.get("solution_cost", parsed.get("solution_cost"))
 
-    # deployment (manteniamo la stessa struttura dict[int->int])
     deployment = parsed.get("deployment", parsed.get("deployment", {}))
-    # se i key sono stringhe numeriche, convertile ad int
+
     try:
         data["deployment"] = {int(k): int(v) for k, v in deployment.items()}
     except Exception:
-        # se non possibile convertire, mantieni il dict originale (ma logga)
-        logger.warning("Deployment non interamente numerico, mantenuto come fornito.")
-        data["deployment"] = deployment
 
+        logger.warning("Deployment not entirely numerical, maintained as supplied.")
+        data["deployment"] = deployment
 
     routes = parsed.get("routes", parsed.get("shortest_paths_constrained", {}))
 
@@ -401,10 +394,10 @@ def extract_info(file_content: str) -> dict:
             try:
                 normalized_routes[str(k)] = [int(x) for x in v]
             except Exception:
-                logger.warning("Una route ha elementi non interi, li lascio invariati per debug: %s", k)
+                logger.warning("A route has non-integer elements, I leave them unchanged for debugging purposes: %s", k)
                 normalized_routes[str(k)] = v
         else:
-            logger.warning("Route '%s' non è lista, ignorata.", k)
+            logger.warning("Route '%s' is not list, ignored.", k)
     data["routes"] = normalized_routes
 
     # metrics / summary
@@ -413,21 +406,21 @@ def extract_info(file_content: str) -> dict:
     data["average_path_weight"] = metrics.get("average_path_weight", parsed.get("average_path_weight"))
     data["percentage_covered"] = metrics.get("percentage_covered", parsed.get("percentage_covered"))
 
-    # WL nodes (assicurati siano int)
+    # WL nodes
     wl_nodes_raw = parsed.get("wl_nodes", parsed.get("WL", []))
     wl_nodes = []
     for x in wl_nodes_raw:
         try:
             wl_nodes.append(int(x))
         except Exception:
-            logger.warning("WL node non numerico ignorato: %s", x)
+            logger.warning("WL non-numeric node ignored: %s", x)
     data["wl_nodes"] = wl_nodes
 
-    # table_entries: converti chiavi numeriche-stringa a int e assicurati tipi interni
+    # table_entries
     table_entries_raw = parsed.get("table_entries", {})
     table_entries = {}
     for k, entries in table_entries_raw.items():
-        # wl key può essere "6" oppure 6
+
         try:
             key = int(k)
         except Exception:
@@ -443,11 +436,11 @@ def extract_info(file_content: str) -> dict:
                 try:
                     match_fields = [int(x) for x in match_fields]
                 except Exception:
-                    logger.warning("match_fields non numerici in WL %s, lasciati così.", k)
+                    logger.warning("non_numeric_fields in WL %s.", k)
                 try:
                     action_params = [int(x) for x in action_params]
                 except Exception:
-                    logger.warning("action_params non numerici in WL %s, lasciati così.", k)
+                    logger.warning("non-numeric action_parameters in WL %s.", k)
                 parsed_list.append({
                     "table": table_name,
                     "action": action_name,
@@ -455,20 +448,19 @@ def extract_info(file_content: str) -> dict:
                     "action_params": action_params
                 })
         else:
-            logger.warning("table_entries per WL %s non è una lista, ignorata.", k)
+            logger.warning("table_entries for WL %s is not a list", k)
         table_entries[key] = parsed_list
     data["table_entries"] = table_entries
 
-    # classic shortest paths (optional)
+    # classic shortest paths
     data["shortest_paths_classic"] = parsed.get("shortest_paths_classic", {})
 
-    # Mantieni comportamento originale: installa le WL rules subito se controller e switches esistono
     try:
-        # 'controller' e 'switches' sono variabili globali nel tuo modulo (come nel tuo esempio)
+
         controller.WL_manager.install_wl_rules(data["wl_nodes"], switches)
     except NameError:
-        # se non definite, non interrompere il parsing — caller deciderà cosa fare
-        logger.debug("controller o switches non definiti in questo scope; skip WL install.")
+
+        logger.debug("controllers or switches not defined in this scope; skip WL install.")
     except Exception:
         logger.exception("Errore installando WL rules; proseguo comunque.")
 
@@ -487,20 +479,20 @@ async def upload_file(file: UploadFile = File(...)):
         try:
             content = raw.decode("utf-8")
         except Exception as e:
-            logger.error("Errore decodifica file: %s", e)
-            raise HTTPException(status_code=400, detail="File non decodificabile come UTF-8")
+            logger.error("File decoding error: %s", e)
+            raise HTTPException(status_code=400, detail="File cannot be decoded as UTF-8")
 
         # Parse + normalize using your JSON-only parser
         try:
-            data = extract_info(content)  # questa è la funzione JSON-only che hai inserito
+            data = extract_info(content)
         except ValueError as e:
-            logger.error("Errore parsing JSON: %s", e)
+            logger.error("Error parsing JSON: %s", e)
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            logger.exception("Errore imprevisto in extract_info")
-            raise HTTPException(status_code=400, detail="Errore parsing input")
+            logger.exception("Error in extract_info")
+            raise HTTPException(status_code=400, detail="Error parsing input")
 
-        # aggiorna gauges (defensivamente)
+
         try:
             if data.get("nodes") is not None:
                 nodes_gauge.set(data["nodes"])
@@ -517,31 +509,26 @@ async def upload_file(file: UploadFile = File(...)):
             if data.get("percentage_covered") is not None:
                 percentage_covered_gauge.set(data["percentage_covered"])
         except Exception:
-            logger.exception("Errore aggiornando gauges; proseguo comunque.")
+            logger.exception("Error updating gauges; I continue anyway.")
 
         # --- persist normalized JSON to disk (legacy reads parsed_data.json) ---
         output_filename = "parsed_data.json"
-        # assicurati che esista la chiave 'routes' (anche vuota) e che sia serializzabile
+
         if "routes" not in data:
             data["routes"] = {}
 
         try:
-            # scrittura atomica minima: scrivi su file temporaneo e rinomina
+
             tmp_name = output_filename + ".tmp"
             with open(tmp_name, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_name, output_filename)  # atomicamente sostituisce
+            os.replace(tmp_name, output_filename)
             logger.info("Data saved to %s", output_filename)
         except Exception:
-            logger.exception("Errore scrittura parsed_data.json")
-            raise HTTPException(status_code=500, detail="Errore salvando parsed_data.json")
-
-        # --- chiamate legacy (che leggono parsed_data.json internamente) ---
-
-
-        # stampa e log delle WL e delle table_entries per debug
+            logger.exception("Error writing parsed_data.json")
+            raise HTTPException(status_code=500, detail="Error saving parsed_data.json")
         try:
             logger.info("=== WL NODES === %s", data.get("wl_nodes", []))
             logger.info("=== TABLE ENTRIES PER WL ===")
@@ -554,29 +541,27 @@ async def upload_file(file: UploadFile = File(...)):
                                 " ".join(map(str, entry["match_fields"])),
                                 " ".join(map(str, entry["action_params"])))
         except Exception:
-            logger.exception("Errore logging table_entries")
-
-        # install table entries (questa funzione accetta 'data' e controller.p4info_helper)
+            logger.exception("Error logging table_entries")
         try:
             install_table_entries_on_wls(data, controller.p4info_helper)
         except Exception:
             logger.exception("Error installing table entries")
         try:
-            install_tunnel_rules()  # funzione legacy che legge parsed_data.json
+            install_tunnel_rules()
         except Exception:
             logger.exception("Error in install_tunnel_rules (legacy)")
-
-        return {
+        result = {
             "message": "Controller executed successfully",
             "execution_time": time.time() - received_file_time
         }
+        logging.info("Result: %s", result)
+        return result
     except HTTPException:
-        # rilancia HTTPException intatto
+
         raise
     except Exception as e:
         logger.exception("Error processing file: %s", e)
         raise HTTPException(status_code=400, detail=f"Error processing file: {str(e)}")
-
 
 
 @app.get("/metrics/")
@@ -588,7 +573,7 @@ async def metrics():
 async def startup_event():
     logger.info("Server starting...")
     global controller
-    controller = P4Controller()  # Inizializza il controller senza argomenti
+    controller = P4Controller()
     logger.info("Controller initialized successfully.")
     logger.info("Starting the controller in a new thread.")
 

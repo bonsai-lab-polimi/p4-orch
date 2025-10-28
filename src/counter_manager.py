@@ -19,14 +19,16 @@ class CounterManager:
             ['switch', 'tunnel_id']
         )
         # Bytes
-        self.ingress_tunnel_byte_count = Gauge('ingress_tunnel_byte_count', 'Number of bytes ingress per tunnel',
+        self.ingress_tunnel_byte_count = Gauge('ingress_tunnel_byte_count', 'Numero di byte ingressi per tunnel',
                                                ['switch', 'tunnel_id'])
-        self.egress_tunnel_byte_count = Gauge('egress_tunnel_byte_count', 'Number of bytes egress per tunnel',
+        self.egress_tunnel_byte_count = Gauge('egress_tunnel_byte_count', 'Numero di byte egressi per tunnel',
                                               ['switch', 'tunnel_id'])
         # Definition of Prometheus counters
 
     def update_prometheus_counters(self, sw, counter_name, tunnel_id, packet_count, byte_count):
-       
+        """
+        Aggiorna i contatori Prometheus
+        """
         if counter_name == "MyIngress.ingressTunnelCounter":
             self.ingress_tunnel_packet_count.labels(sw.name, tunnel_id).set(packet_count)
             self.ingress_tunnel_byte_count.labels(sw.name, tunnel_id).set(byte_count)
@@ -53,7 +55,9 @@ class CounterManager:
                 self.update_prometheus_counters(sw, counter_name, tunnel_id_int, packet_count, byte_count)
 
     def monitor_tunnel_counters(self, switches, tunnel_ids):
-       
+        """
+        Esegue il monitoraggio continuo dei contatori di pacchetti dagli switch.
+        """
         while True:
             # print('\n----- Monitoring Tunnel Counters -----')
             for tunnel_id in tunnel_ids:

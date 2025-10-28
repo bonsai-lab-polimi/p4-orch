@@ -8,7 +8,7 @@ import os
 HOST = '0.0.0.0'
 TCP_PORT = 12345
 UDP_PORT = 54321
-FRASI_ACCETTATE = [b'Ciao, come stai?']
+FRASI_ACCETTATE = [b'Hello Server from Client']
 TIMEOUT = 10
 EXPORT_INTERVAL = 30  # secondi
 
@@ -36,7 +36,7 @@ def generate_summary():
             return
 
         client_sent = client_df.groupby(["IP", "Porta"]).size().reset_index(name="Sent")
-        server_received = server_df.groupby(["IP", "Porta", "Protocollo"])["Packet_Count"].sum().reset_index(name="Received")
+        server_received = server_df.groupby(["IP", "Port", "Protocol"])["Packet_Count"].sum().reset_index(name="Received")
 
         # Uniamo per IP, Porta e Protocollo
         summary_df = pd.merge(client_sent, server_received, on=["IP", "Porta"], how="outer").fillna(0)

@@ -7,7 +7,7 @@ import os
 
 SERVER_IP = '10.0.1.2'
 SERVER_PORT = 12345
-MESSAGGI = [b'Ciao, ', b'come ', b'stai?']
+MESSAGGI = [b'Hello ', b'Server ', b'from ', b'Client']
 NUM_CICLI = 1
 EXCEL_FILE = "packet_stats.xlsx"
 SHEET_NAME = "Client"  # 🔹 Foglio condiviso
@@ -15,7 +15,7 @@ log = []
 
 def salva_client_data():
     global log
-    new_df = pd.DataFrame(log, columns=["Timestamp", "IP", "Porta", "Messaggio", "Totale_Pacchetti_Inviati"])
+    new_df = pd.DataFrame(log, columns=["Timestamp", "IP", "Port", "Message", "Total_Packages_Sent"])
 
     # 📥 Legge l'intero file se esiste
     if os.path.exists(EXCEL_FILE):

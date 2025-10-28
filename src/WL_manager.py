@@ -1,7 +1,11 @@
+from prometheus_client import Gauge
+
+
 class WLManager:
     def __init__(self, p4info_helper, switches):
         self.p4info_helper = p4info_helper
         self.switches = switches
+        self.isWLGauge = Gauge('weak_learner', 'weak learner', ['switch'])
 
     def install_wl_rules(self, wl_nodes, switches):
         """
@@ -26,10 +30,14 @@ class WLManager:
                     print(table_entry)
                     self.p4info_helper.upsertRule(switch, "MyIngress.color_table", 0, table_entry)
                     i += 1
+                    self.isWLGauge.labels(switch=switch.name).set(
+                        1)
 
                 else:
                     flag_value = 0
                     print(f"Installing rule with flag=0 on {switch.name} (non-WL switch).")
+                    self.isWLGauge.labels(switch=switch.name).set(
+                        0)
                 port_range = [1, 55]
 
                 table_entry = self.p4info_helper.buildTableEntry(
@@ -40,6 +48,7 @@ class WLManager:
                     action_params={},
                     priority=1
                 )
+
 
                 self.p4info_helper.upsertRule(switch, "MyIngress.WL_table", port_range, table_entry)
 

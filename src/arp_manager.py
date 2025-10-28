@@ -171,10 +171,10 @@ class ArpManager:
         protocol_type = payload.ptype
         operation = payload.op
 
-        sender_mac = payload.hwsrc  # MAC mittente
-        sender_ip = payload.psrc  # IP mittente
-        target_mac = payload.hwdst  # MAC destinatario
-        target_ip = payload.pdst  # IP destinatario
+        sender_mac = payload.hwsrc
+        sender_ip = payload.psrc
+        target_mac = payload.hwdst
+        target_ip = payload.pdst
         arp_data = {
             "hardware_type": hardware_type,
             "protocol_type": protocol_type,

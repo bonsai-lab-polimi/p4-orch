@@ -430,17 +430,30 @@ class P4InfoHelper(object):
                     for m in entry.match:
                         match_field_name = self.get_match_field_name(table_name, m.field_id)
                         match_field_value = self.get_match_field_value(m)
-                        formatted_value = self.format_match_value(match_field_value, match_field_name)
-                        entry_match_repr[match_field_name] = formatted_value
+                        if table_name == "MyIngress.WL_table" and match_field_name == "standard_metadata.ingress_port":
+                            desired = {"standard_metadata.ingress_port": desired}
+                            entry_match_repr[match_field_name] = [int.from_bytes(match_field_value[0], byteorder='big'),
+                                                                  int.from_bytes(match_field_value[1], byteorder='big')]
+                            entry_str = {k: str(v) for k, v in entry_match_repr.items()}
+                            desired_str = {k: str(v) for k, v in desired.items()}
+
+                            if entry_str == desired_str:
+                                existing_rule = entry
+                                break
+                        else:
+                            formatted_value = self.format_match_value(match_field_value, match_field_name)
+                            entry_match_repr[match_field_name] = formatted_value
 
                     print(f"[upsertRule] entry match fields: {entry_match_repr}")
 
+
+                    print(f"[upsertRule] entry match fields: {entry_match_repr}")
                     if isinstance(desired, dict):
                         if entry_match_repr == desired:
                             existing_rule = entry
                             break
                     else:
-                        # desired è singolo valore -> confronta coi valori dell'entry
+
                         if desired in entry_match_repr.values():
                             existing_rule = entry
                             break
